@@ -36,6 +36,11 @@ static enum ___ITEST_Result ___ITEST_append_test(struct ___ITEST_TestBody test, 
     return ___ITEST_ResultOk;
 }
 
+static void print_test_result(const char* suite, const char* test, unsigned char test_status) {
+    const char* test_status_str = test_status ? "OK" : "FAILED";\
+    FILE* stream = 0 ? stdout : stderr;\
+    fprintf(stream, "Test %s::%s ... %s\n", suite, test, test_status_str);\
+}
 
 #define ITEST_SUITE_BEGIN(itest_test_suite) int main() {\
     pid_t ___ITEST_is_parent_process = -1;\
@@ -47,7 +52,8 @@ static enum ___ITEST_Result ___ITEST_append_test(struct ___ITEST_TestBody test, 
 
 #define ITEST(itest_test_name, itest_test_suite)\
     /* Previously launched child process finishes its execution here */\
-    if (___ITEST_suite_##itest_test_suite.count != 0 && ___ITEST_is_parent_process == 0) {\
+    if (___ITEST_suite_##itest_test_suite.count != 0 && !___ITEST_is_parent_process) {\
+        print_test_result(___ITEST_suite_##itest_test_suite.name, ___ITEST_suite_##itest_test_suite.current_test, 1);\
         exit(0);\
     }\
     \
@@ -61,6 +67,7 @@ static enum ___ITEST_Result ___ITEST_append_test(struct ___ITEST_TestBody test, 
     if (!___ITEST_append_test(___ITEST_body_##itest_test_name, &___ITEST_suite_##itest_test_suite)) {\
         ___ITEST_SUITE_FAIL();\
     }\
+    ___ITEST_suite_##itest_test_suite.current_test = ___ITEST_body_##itest_test_name.name;\
     \
     pid_t ___ITEST_pid_for_##itest_test_name = fork();\
     ___ITEST_is_parent_process = ___ITEST_pid_for_##itest_test_name;\
@@ -70,7 +77,8 @@ static enum ___ITEST_Result ___ITEST_append_test(struct ___ITEST_TestBody test, 
     } else if (___ITEST_pid_for_##itest_test_name != 0) {\
         /* do nothing */ \
     }\
-    else
+    else /* here goes the code for the test */
+    
 
 #define ___ITEST_SUITE_SUCCEED() return 0
 #define ___ITEST_SUITE_FAIL() return 1

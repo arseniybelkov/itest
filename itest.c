@@ -7,11 +7,7 @@
 
 /// TODO: mutex'd print_test_result
 
-typedef unsigned char u8;
-
-static const size_t ___ITEST_MAX_TEST_SUITE_SIZE = 256;
-
-enum ___ITEST_TestStatus : u8 {
+enum ___ITEST_TestStatus : uint8_t {
     ___ITEST_TestStatusRunning = 0,
     ___ITEST_TestStatusSuccess = 1,
     ___ITEST_TestStatusFailure = 2,
@@ -50,7 +46,6 @@ struct ___ITEST_TestSuite {
     const char* name;
     const char* current_test;
     enum ___ITEST_TestStatus current_test_status;
-    struct ___ITEST_TestInfo tests[___ITEST_MAX_TEST_SUITE_SIZE];
 };
 
 // static int ___ITEST_append_test(struct ___ITEST_TestInfo test, struct ___ITEST_TestSuite* suite) {\
@@ -77,14 +72,14 @@ static struct ___ITEST_Channel ___ITEST_Channel_create() {
 }
 
 static void ___ITEST_send_test_result(struct ___ITEST_TestResult* result, struct ___ITEST_Channel* channel) {
-    u8 is_success = result->status == ___ITEST_TestStatusSuccess;
+    uint8_t is_success = result->status == ___ITEST_TestStatusSuccess;
     size_t nbyte = is_success ? sizeof(result->as.success) : sizeof(result->as.failure);
     const char* data = is_success ? (char*) &result->as.success : (char*) &result->as.failure;
     write(channel->sender, data, nbyte);
 }
 
 static void ___ITEST_print_test_result(const char* suite, const char* test, enum ___ITEST_TestStatus test_status) {
-    u8 is_success = test_status == ___ITEST_TestStatusSuccess;
+    uint8_t is_success = test_status == ___ITEST_TestStatusSuccess;
     const char* test_status_str = is_success ? "OK" : "FAILED";\
     FILE* stream = is_success ? stdout : stderr;\
     fprintf(stream, "Test %s::%s ... %s\n", suite, test, test_status_str);\
@@ -129,24 +124,30 @@ static void ___ITEST_print_test_result(const char* suite, const char* test, enum
     }\
     else /* here goes the code for the test */
 
+#define ASSERT_EQ(x, y) ASSERT_OP((x), ==, (y))
+
+#define ASSERT_NE(x, y) ASSERT_OP((x), !=, (y))
+
+#define ASSERT_GT(x, y) ASSERT_OP((x), >, (y))
+
+#define ASSERT_LT(x, y) ASSERT_OP((x), <, (y))
+
+#define ASSERT_GE(x, y) ASSERT_OP((x), >=, (y))
+
+#define ASSERT_LE(x, y) ASSERT_OP((x), <=, (y))
+
+#define ASSERT_OP(x, op, y) do {\
+    int lhs = x;\
+    int rhs = y;\
+    ASSERT(lhs ##op rhs);\
+} while (0)
+
 #define ASSERT(expr) do {\
     const char* expression = #expr;\
     if (!(expr)) {\
-        /* Send test result via pipe to parrent process */\
+        /* TODO: send test result via pipe to parent process */\
     }\
 } while (0)
-
-#define ASSERT_EQ(x, y) ASSERT((x) == (y))
-
-#define ASSERT_NE(x, y) ASSERT((x) != (y))
-
-#define ASSERT_GT(x, y) ASSERT((x) > (y))
-
-#define ASSERT_LT(x, y) ASSERT((x) < (y))
-
-#define ASSERT_GE(x, y) ASSERT((x) >= (y))
-
-#define ASSERT_LE(x, y) ASSERT((x) <= (y))
 
 #define ___ITEST_HERE() struct ___ITEST_Location { .file = __FILE__, .line = __LINE__ }
 

@@ -152,7 +152,7 @@ static void ___ITEST_print_test_result(const char* suite, const char* test, stru
     FILE* stream = is_success ? stdout : stderr;
 
     ___ITEST_Mutex_lock(___ITEST_stdout_guard);
-    
+
     fprintf(stream, "Test %s::%s ... %s\n", suite, test, test_status_str);
     if (!is_success) {
         const char* expression = result.as.failure.expression;
@@ -222,7 +222,6 @@ static struct ___ITEST_TestSuite ___ITEST_test_suite = {
     const char* expression = #expr;\
     struct ___ITEST_Location location = ___ITEST_HERE();\
     if (!(expr)) {\
-        printf("HERE\n");\
         ___ITEST_print_test_result(\
             ___ITEST_test_suite.name,\
             ___ITEST_test_suite.current_test,\

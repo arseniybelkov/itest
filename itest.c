@@ -5,11 +5,19 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <stdatomic.h>
+#include <sys/mman.h>
 
-/// TODO: mutex'd print_test_result
+/*
+    Synchronization
+    ___ITEST_Mutex is used for guarding stdout / stderr,
+    when tests results are printed.
+
+    It uses futex, that is shared among all the processes.
+    Futex is allocated via `mmap(..., MAP_SHARED, ...)` syscall.
+*/
 
 struct ___ITEST_Mutex {
-    _Atomic(uint32_t) state;
+    _Atomic uint32_t state;
 };
 
 enum ___ITEST_MutexState : uint32_t {
@@ -69,8 +77,31 @@ static void ___ITEST_Mutex_unlock(struct ___ITEST_Mutex* mutex) {
 static struct ___ITEST_Mutex* ___ITEST_stdout_guard = NULL;
 
 static void ___ITEST_init_stdout_guard() {
+    #ifndef MAP_SHARED_VALIDATE
+    #define MAP_SHARED_VALIDATE 0x0
+    #endif
 
+    const int no_file_descriptor = -1;
+    const int no_offset = 0;
+
+    // Allocating futex that is shared between processes.
+    // See the example at https://man7.org/linux/man-pages/man2/futex.2.html
+    ___ITEST_stdout_guard = (struct ___ITEST_Mutex*) mmap(
+        NULL, sizeof(struct ___ITEST_Mutex),
+        PROT_READ | PROT_WRITE,
+        MAP_SHARED | MAP_SHARED_VALIDATE | MAP_ANONYMOUS,
+        no_file_descriptor, no_offset
+    );
+
+    if (___ITEST_stdout_guard == MAP_FAILED) {
+        printf("MMAP failed\n");
+        exit(1);
+    }
 }
+
+/*
+    Test Results & Statuses
+*/
 
 enum ___ITEST_TestStatus : uint8_t {
     ___ITEST_TestStatus_Running = 0,
@@ -95,13 +126,13 @@ struct ___ITEST_TestResult {
     } as;
 };
 
-struct ___ITEST_TestResult ___ITEST_TestResult_succeed() {
+static struct ___ITEST_TestResult ___ITEST_TestResult_succeed() {
     struct ___ITEST_TestResult success = { .status = ___ITEST_TestStatus_Success, .as = {} };
     return success;
 }
 
-struct ___ITEST_TestResult ___ITEST_TestResult_fail(const char* expression, struct ___ITEST_Location location) {
-    struct ___ITEST_TestResult failure = { .status = ___ITEST_TestStatus_Success, .as = {} };
+static struct ___ITEST_TestResult ___ITEST_TestResult_fail(const char* expression, const struct ___ITEST_Location location) {
+    struct ___ITEST_TestResult failure = { .status = ___ITEST_TestStatus_Failure, .as = {} };
     failure.as.failure.expression = expression;
     failure.as.failure.location = location;
 
@@ -117,22 +148,29 @@ struct ___ITEST_TestSuite {
 
 static void ___ITEST_print_test_result(const char* suite, const char* test, struct ___ITEST_TestResult result) {
     uint8_t is_success = result.status == ___ITEST_TestStatus_Success;
-    const char* test_status_str = is_success ? "OK" : "FAILED";\
-    FILE* stream = is_success ? stdout : stderr;\
+    const char* test_status_str = is_success ? "OK" : "FAILED";
+    FILE* stream = is_success ? stdout : stderr;
+
     ___ITEST_Mutex_lock(___ITEST_stdout_guard);
-    fprintf(stream, "Test %s::%s ... %s\n", suite, test, test_status_str);\
+    
+    fprintf(stream, "Test %s::%s ... %s\n", suite, test, test_status_str);
     if (!is_success) {
         const char* expression = result.as.failure.expression;
         struct ___ITEST_Location location = result.as.failure.location;
-        fprintf(stream, "Reason:\n%s at %s:%d\n", expression, location.file, location.line);\
+        fprintf(stream, "Reason:\n%s at %s:%d\n", expression, location.file, location.line);
     }
+
     ___ITEST_Mutex_unlock(___ITEST_stdout_guard);
 }
 
+static struct ___ITEST_TestSuite ___ITEST_test_suite = {
+    .count = 0, .name = NULL, .current_test = NULL, .current_test_status = ___ITEST_TestStatus_Running
+};
+
 #define ITEST_SUITE_BEGIN(itest_test_suite) int main() {\
-    pid_t ___ITEST_is_parent_process = -1;\
+    pid_t ___ITEST_is_child_process = 0;\
     ___ITEST_init_stdout_guard();\
-    struct ___ITEST_TestSuite ___ITEST_suite_##itest_test_suite = { .name = #itest_test_suite, .current_test = NULL, .current_test_status = 0 };\
+    ___ITEST_test_suite.name = #itest_test_suite;\
     
 #define ITEST_SUITE_END(itest_test_suite)\
     ___ITEST_SUITE_SUCCEED();\
@@ -140,13 +178,13 @@ static void ___ITEST_print_test_result(const char* suite, const char* test, stru
 
 #define ITEST(itest_test_name, itest_test_suite)\
     /* Previously launched child process finishes its execution here */\
-    if (___ITEST_suite_##itest_test_suite.count != 0 && !___ITEST_is_parent_process) {\
+    if (___ITEST_test_suite.count != 0 && ___ITEST_is_child_process) {\
         ___ITEST_print_test_result(\
-            ___ITEST_suite_##itest_test_suite.name,\
-            ___ITEST_suite_##itest_test_suite.current_test,\
+            ___ITEST_test_suite.name,\
+            ___ITEST_test_suite.current_test,\
             ___ITEST_TestResult_succeed()\
         );\
-        exit(0);\
+        ___ITEST_SUITE_SUCCEED();\
     }\
     \
     struct ___ITEST_TestResult ___ITEST_status_##itest_test_name = {  };\
@@ -155,10 +193,11 @@ static void ___ITEST_print_test_result(const char* suite, const char* test, stru
         ___ITEST_SUITE_FAIL();\
     }\
     \
-    ___ITEST_suite_##itest_test_suite.current_test = #itest_test_name;\
+    ___ITEST_test_suite.current_test = #itest_test_name;\
     \
     pid_t ___ITEST_pid_for_##itest_test_name = fork();\
-    ___ITEST_is_parent_process = ___ITEST_pid_for_##itest_test_name;\
+    ___ITEST_test_suite.count += 1;\
+    ___ITEST_is_child_process = ___ITEST_pid_for_##itest_test_name == 0;\
     \
     if (___ITEST_pid_for_##itest_test_name == -1) {\
         ___ITEST_SUITE_FAIL();\
@@ -181,17 +220,19 @@ static void ___ITEST_print_test_result(const char* suite, const char* test, stru
 
 #define ASSERT(expr) do {\
     const char* expression = #expr;\
+    struct ___ITEST_Location location = ___ITEST_HERE();\
     if (!(expr)) {\
+        printf("HERE\n");\
         ___ITEST_print_test_result(\
-            "SUITE",\
-            "SOME_TEST",\
-            ___ITEST_TestResult_fail(expression, ___ITEST_HERE())\
+            ___ITEST_test_suite.name,\
+            ___ITEST_test_suite.current_test,\
+            ___ITEST_TestResult_fail(expression, location)\
         );\
         ___ITEST_SUITE_FAIL();\
     }\
 } while (0)
 
-#define ___ITEST_HERE() struct ___ITEST_Location { .file = __FILE__, .line = __LINE__ }
+#define ___ITEST_HERE() { .file = __FILE__, .line = __LINE__ }
 
 #define ___ITEST_SUITE_SUCCEED() return 0
 

@@ -10,7 +10,6 @@ int add(int x, int y) {
 #include "../itest.c"
 
 ITEST_SUITE_BEGIN(SIMPLE_TESTS) {
-
 	ITEST(two_plus_two, SIMPLE_TESTS) {
 		ASSERT_EQ(4, add(2, 2));
 	}

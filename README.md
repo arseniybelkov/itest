@@ -15,14 +15,14 @@ int add(int x, int y) {
 
 ITEST_SUITE_BEGIN(SIMPLE_TESTS) {
 
-	ITEST(two_plus_two, SIMPLE_TESTS) {
+	ITEST(two_plus_two) {
 		ASSERT_EQ(4, add(2, 2));
 	}
 
-	ITEST(two_plus_three, SIMPLE_TESTS) {
+	ITEST(two_plus_three) {
 		ASSERT_EQ(5, add(2, 3));
 	}
 
-	ITEST_SUITE_END(SIMPLE_TESTS)
+	ITEST_SUITE_END()
 }
 ```

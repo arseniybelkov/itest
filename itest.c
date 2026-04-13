@@ -33,14 +33,8 @@ int __ulock_wait(uint32_t operation, void* addr, uint64_t value,
                 uint32_t timeout); /* timeout is specified in microseconds */
 int __ulock_wake(uint32_t operation, void* addr, uint64_t wake_value);
 
-static void ___ITEST_futex_wake_one(uint32_t* waiters) {
-    __ulock_wake(UL_COMPARE_AND_WAIT, waiters, 0);
-}
-
-static void ___ITEST_futex_wait(uint32_t* loc, uint32_t old) {
-    __ulock_wait(UL_COMPARE_AND_WAIT, loc, old, 0);
-}
 #else
+
 #include <sys/syscall.h>
 #include <linux/futex.h>
 
@@ -48,6 +42,7 @@ static int ___ITEST_futex(uint32_t* uaddr, int op, int val,
                  const struct timespec* timeout, int* uaddr2, int val3) {
   return syscall(SYS_futex, uaddr, op, val, timeout, uaddr2, val3);
 }
+#endif
 
 /*
     FUTEX_WAKE and FUTEX_WAIT are used without *_PRIVATE flag,
@@ -56,26 +51,26 @@ static int ___ITEST_futex(uint32_t* uaddr, int op, int val,
 */
 
 static void ___ITEST_futex_wake_one(uint32_t* waiters) {
+    #ifdef __APPLE__
+    __ulock_wake(UL_COMPARE_AND_WAIT, waiters, 0);
+    #else
     ___ITEST_futex(waiters, FUTEX_WAKE, 1, NULL, NULL, 0);
+    #endif
 }
 
 static void ___ITEST_futex_wait(uint32_t* loc, uint32_t old) {
+    #ifdef __APPLE__
+    __ulock_wait(UL_COMPARE_AND_WAIT, loc, old, 0);
+    #else
     ___ITEST_futex(loc, FUTEX_WAIT, old, NULL, NULL, 0);
-}
-#endif
-
-static void dbg(const char* message) {
-    printf("%s\n", message);
+    #endif
 }
 
 static void ___ITEST_Mutex_lock(struct ___ITEST_Mutex* mutex) {
     uint32_t mutex_is_free = ___ITEST_MutexState_Free;
     if (!atomic_compare_exchange_strong(&mutex->state, &mutex_is_free, ___ITEST_MutexState_Contention)) {
-        dbg("after cas");
         while (atomic_exchange(&mutex->state, ___ITEST_MutexState_Locked) != ___ITEST_MutexState_Free) {
-            dbg("after xch");
             ___ITEST_futex_wait((uint32_t*) &mutex->state, ___ITEST_MutexState_Locked);
-            dbg("after futex_wait");
         }
     }
 }
@@ -185,11 +180,11 @@ static struct ___ITEST_TestSuite ___ITEST_test_suite = {
     ___ITEST_init_stdout_guard();\
     ___ITEST_test_suite.name = #itest_test_suite;\
     
-#define ITEST_SUITE_END(itest_test_suite)\
+#define ITEST_SUITE_END()\
     ___ITEST_SUITE_SUCCEED();\
 }
 
-#define ITEST(itest_test_name, itest_test_suite)\
+#define ITEST(itest_test_name)\
     /* Previously launched child process finishes its execution here */\
     if (___ITEST_test_suite.count != 0 && ___ITEST_is_child_process) {\
         ___ITEST_print_test_result(\

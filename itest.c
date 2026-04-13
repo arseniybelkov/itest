@@ -7,6 +7,10 @@
 #include <stdatomic.h>
 #include <sys/mman.h>
 
+#if defined(_WIN32) || defined(_WIN64)
+#define __WINDOWS__
+#endif
+
 /*
     Synchronization
     ___ITEST_Mutex is used for guarding stdout / stderr,
@@ -33,7 +37,10 @@ int __ulock_wait(uint32_t operation, void* addr, uint64_t value,
                 uint32_t timeout); /* timeout is specified in microseconds */
 int __ulock_wake(uint32_t operation, void* addr, uint64_t wake_value);
 
-#else
+#elif defined(__WINDOWS__)
+#include <synchapi.h>
+
+#else // LINUX / BSD
 
 #include <sys/syscall.h>
 #include <linux/futex.h>
@@ -53,6 +60,8 @@ static int ___ITEST_futex(uint32_t* uaddr, int op, int val,
 static void ___ITEST_futex_wake_one(uint32_t* waiters) {
     #ifdef __APPLE__
     __ulock_wake(UL_COMPARE_AND_WAIT, waiters, 0);
+    #elif defined(__WINDOWS__)
+    WakeByAddressSingle(waiters);
     #else
     ___ITEST_futex(waiters, FUTEX_WAKE, 1, NULL, NULL, 0);
     #endif
@@ -61,6 +70,8 @@ static void ___ITEST_futex_wake_one(uint32_t* waiters) {
 static void ___ITEST_futex_wait(uint32_t* loc, uint32_t old) {
     #ifdef __APPLE__
     __ulock_wait(UL_COMPARE_AND_WAIT, loc, old, 0);
+    #elif defined(__WINDOWS__)
+    WaitOnAddress(loc, &old, sizeof(uint32_t*), INFINITE);
     #else
     ___ITEST_futex(loc, FUTEX_WAIT, old, NULL, NULL, 0);
     #endif

@@ -49,20 +49,33 @@ static int ___ITEST_futex(uint32_t* uaddr, int op, int val,
   return syscall(SYS_futex, uaddr, op, val, timeout, uaddr2, val3);
 }
 
+/*
+    FUTEX_WAKE and FUTEX_WAIT are used without *_PRIVATE flag,
+    because in the `itest` case futex is not bounded to one process, but rather
+    establishes communication between a number of them.
+*/
+
 static void ___ITEST_futex_wake_one(uint32_t* waiters) {
-    ___ITEST_futex(waiters, FUTEX_WAKE_PRIVATE, 1, NULL, NULL, 0);
+    ___ITEST_futex(waiters, FUTEX_WAKE, 1, NULL, NULL, 0);
 }
 
 static void ___ITEST_futex_wait(uint32_t* loc, uint32_t old) {
-    ___ITEST_futex(loc, FUTEX_WAIT_PRIVATE, old, NULL, NULL, 0);
+    ___ITEST_futex(loc, FUTEX_WAIT, old, NULL, NULL, 0);
 }
 #endif
 
+static void dbg(const char* message) {
+    printf("%s\n", message);
+}
+
 static void ___ITEST_Mutex_lock(struct ___ITEST_Mutex* mutex) {
     uint32_t mutex_is_free = ___ITEST_MutexState_Free;
-    if (atomic_compare_exchange_strong(&mutex->state, &mutex_is_free, ___ITEST_MutexState_Locked)) {
+    if (!atomic_compare_exchange_strong(&mutex->state, &mutex_is_free, ___ITEST_MutexState_Contention)) {
+        dbg("after cas");
         while (atomic_exchange(&mutex->state, ___ITEST_MutexState_Locked) != ___ITEST_MutexState_Free) {
+            dbg("after xch");
             ___ITEST_futex_wait((uint32_t*) &mutex->state, ___ITEST_MutexState_Locked);
+            dbg("after futex_wait");
         }
     }
 }
@@ -77,10 +90,6 @@ static void ___ITEST_Mutex_unlock(struct ___ITEST_Mutex* mutex) {
 static struct ___ITEST_Mutex* ___ITEST_stdout_guard = NULL;
 
 static void ___ITEST_init_stdout_guard() {
-    #ifndef MAP_SHARED_VALIDATE
-    #define MAP_SHARED_VALIDATE 0x0
-    #endif
-
     const int no_file_descriptor = -1;
     const int no_offset = 0;
 
@@ -89,14 +98,16 @@ static void ___ITEST_init_stdout_guard() {
     ___ITEST_stdout_guard = (struct ___ITEST_Mutex*) mmap(
         NULL, sizeof(struct ___ITEST_Mutex),
         PROT_READ | PROT_WRITE,
-        MAP_SHARED | MAP_SHARED_VALIDATE | MAP_ANONYMOUS,
+        MAP_SHARED | MAP_ANONYMOUS,
         no_file_descriptor, no_offset
     );
 
     if (___ITEST_stdout_guard == MAP_FAILED) {
-        printf("MMAP failed\n");
+        fprintf(stderr, "MMAP failed\n");
         exit(1);
     }
+
+    ___ITEST_Mutex_unlock(___ITEST_stdout_guard);
 }
 
 /*
@@ -151,7 +162,9 @@ static void ___ITEST_print_test_result(const char* suite, const char* test, stru
     const char* test_status_str = is_success ? "OK" : "FAILED";
     FILE* stream = is_success ? stdout : stderr;
 
+    // printf("BEFORE LOCK\n");
     ___ITEST_Mutex_lock(___ITEST_stdout_guard);
+    // printf("AFTER LOCK\n");
 
     fprintf(stream, "Test %s::%s ... %s\n", suite, test, test_status_str);
     if (!is_success) {

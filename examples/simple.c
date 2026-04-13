@@ -18,5 +18,11 @@ ITEST_SUITE_BEGIN(SIMPLE_TESTS) {
 		ASSERT_EQ(5, add(2, 3));
 	}
 
+	ITEST(ten_plus_one_wrong, SIMPLE_TESTS) {
+		int x = 10;
+		int y = 1;
+		ASSERT_EQ(21, add(x, y));
+	}
+
 	ITEST_SUITE_END(SIMPLE_TESTS)
 }

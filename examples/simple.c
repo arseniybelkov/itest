@@ -7,7 +7,7 @@ int add(int x, int y) {
 // ------------------
 // TESTS
 // ------------------
-#include "../itest.c"
+#include "../itest.h"
 
 ITEST_SUITE_BEGIN(SIMPLE_TESTS) {
 	ITEST_SINGLE_WORKER(two_plus_two) {

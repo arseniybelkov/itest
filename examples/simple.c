@@ -1,13 +1,21 @@
-#include <assert.h>
+#include "../itest.h"
 
 int add(int x, int y) {
 	return x + y;
 }
 
+#ifdef TEST_ONLY_MAIN
+int main() {
+	int x = add(1 ,2);
+	ASSERT_EQ(x, 3);
+	ASSERT_EQ(x, 2);
+	return 0;
+}
+#endif
+
 // ------------------
 // TESTS
 // ------------------
-#include "../itest.h"
 
 ITEST_SUITE_BEGIN(SIMPLE_TESTS) {
 	ITEST_SINGLE_WORKER(two_plus_two) {

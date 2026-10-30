@@ -7,115 +7,6 @@
 #include <stdatomic.h>
 #include <sys/mman.h>
 
-#if defined(_WIN32) || defined(_WIN64)
-#define __WINDOWS__
-#endif
-
-/*
-    Synchronization
-    ___ITEST_Mutex is used for guarding stdout / stderr,
-    when tests results are printed.
-
-    It uses futex, that is shared among all the processes.
-    Futex is allocated via `mmap(..., MAP_SHARED, ...)` syscall.
-*/
-
-struct ___ITEST_mutex {
-    _Atomic uint32_t state;
-};
-
-enum ___ITEST_mutex_state : uint32_t {
-    ___ITEST_mutex_state_free = 0,
-    ___ITEST_mutex_state_contention = 1,
-    ___ITEST_mutex_state_locked = 2,
-};
-
-#ifdef __APPLE__
-#define UL_COMPARE_AND_WAIT 1
-
-int __ulock_wait(uint32_t operation, void* addr, uint64_t value,
-                uint32_t timeout); /* timeout is specified in microseconds */
-int __ulock_wake(uint32_t operation, void* addr, uint64_t wake_value);
-
-#elif defined(__WINDOWS__)
-#include <synchapi.h>
-
-#else // LINUX / BSD
-
-#include <sys/syscall.h>
-#include <linux/futex.h>
-
-static int ___ITEST_futex(uint32_t* uaddr, int op, int val,
-                 const struct timespec* timeout, int* uaddr2, int val3) {
-  return syscall(SYS_futex, uaddr, op, val, timeout, uaddr2, val3);
-}
-#endif
-
-/*
-    FUTEX_WAKE and FUTEX_WAIT are used without *_PRIVATE flag,
-    because in the `itest` case futex is not bounded to one process, but rather
-    establishes communication between a number of them.
-*/
-
-static void ___ITEST_futex_wake_one(uint32_t* waiters) {
-    #ifdef __APPLE__
-    __ulock_wake(UL_COMPARE_AND_WAIT, waiters, 0);
-    #elif defined(__WINDOWS__)
-    WakeByAddressSingle(waiters);
-    #else
-    ___ITEST_futex(waiters, FUTEX_WAKE, 1, NULL, NULL, 0);
-    #endif
-}
-
-static void ___ITEST_futex_wait(uint32_t* loc, uint32_t old) {
-    #ifdef __APPLE__
-    __ulock_wait(UL_COMPARE_AND_WAIT, loc, old, 0);
-    #elif defined(__WINDOWS__)
-    WaitOnAddress(loc, &old, sizeof(uint32_t*), INFINITE);
-    #else
-    ___ITEST_futex(loc, FUTEX_WAIT, old, NULL, NULL, 0);
-    #endif
-}
-
-static void ___ITEST_mutex_lock(struct ___ITEST_mutex* mutex) {
-    uint32_t mutex_is_free = ___ITEST_mutex_state_free;
-    if (!atomic_compare_exchange_strong(&mutex->state, &mutex_is_free, ___ITEST_mutex_state_contention)) {
-        while (atomic_exchange(&mutex->state, ___ITEST_mutex_state_locked) != ___ITEST_mutex_state_free) {
-            ___ITEST_futex_wait((uint32_t*) &mutex->state, ___ITEST_mutex_state_locked);
-        }
-    }
-}
-
-static void ___ITEST_mutex_unlock(struct ___ITEST_mutex* mutex) {
-    uint32_t* waiters = (uint32_t*) &mutex->state;
-    if (atomic_exchange(&mutex->state, ___ITEST_mutex_state_free) != ___ITEST_mutex_state_free) {
-        ___ITEST_futex_wake_one(waiters);
-    }
-}
-
-static struct ___ITEST_mutex* ___ITEST_stdout_guard = NULL;
-
-static void ___ITEST_init_stdout_guard() {
-    const int no_file_descriptor = -1;
-    const int no_offset = 0;
-
-    // Allocating futex that is shared between processes.
-    // See the example at https://man7.org/linux/man-pages/man2/futex.2.html
-    ___ITEST_stdout_guard = (struct ___ITEST_mutex*) mmap(
-        NULL, sizeof(struct ___ITEST_mutex),
-        PROT_READ | PROT_WRITE,
-        MAP_SHARED | MAP_ANONYMOUS,
-        no_file_descriptor, no_offset
-    );
-
-    if (___ITEST_stdout_guard == MAP_FAILED) {
-        fprintf(stderr, "MMAP failed\n");
-        exit(1);
-    }
-
-    ___ITEST_mutex_unlock(___ITEST_stdout_guard);
-}
-
 /*
     Test Results & Statuses
 */
@@ -162,28 +53,29 @@ struct ___ITEST_test_suite {
     enum ___ITEST_test_status current_test_status;
 };
 
-#define ___ITEST_KNRM "\x1B[0m" // resets color
-#define ___ITEST_KRED "\x1B[31m"
-#define ___ITEST_KGRN "\x1B[32m"
+static const char* ___ITEST_NO_COLOR = "\x1B[0m";
+static const char* ___ITEST_RED_COLOR = "\x1B[31m";
+static const char* ___ITEST_GREEN_COLOR = "\x1B[32m";
 
-static void ___ITEST_print_test_result(const char* suite, const char* test, struct ___ITEST_test_result result) {
+static void ___ITEST_print_test_result(
+    const char* suite, const char* test,
+    const struct ___ITEST_test_result result
+) {
     uint8_t is_success = result.status == ___ITEST_test_status_success;
     const char* test_status_str = is_success ? "OK" : "FAILED";
-    const char* color = is_success ? ___ITEST_KGRN : ___ITEST_KRED;
     FILE* stream = is_success ? stdout : stderr;
 
-    // printf("BEFORE LOCK\n");
-    // ___ITEST_mutex_lock(___ITEST_stdout_guard);
-    // printf("AFTER LOCK\n");
-
-    fprintf(stream, "%sTest %s::%s ... %s%s\n", ___ITEST_KNRM, suite, test, color, test_status_str);
+    #ifdef ITEST_NO_COLOR_IO
+    fprintf(stream, "Test %s::%s ... %s\n", suite, test, test_status_str);
+    #else
+    const char* color = is_success ? ___ITEST_GREEN_COLOR : ___ITEST_RED_COLOR;
+    fprintf(stream, "%sTest %s::%s ... %s%s\n", ___ITEST_NO_COLOR, suite, test, color, test_status_str);
+    #endif
     if (!is_success) {
         const char* expression = result.as.failure.expression;
         struct ___ITEST_location location = result.as.failure.location;
         fprintf(stream, "Reason:\n%s at %s:%d\n", expression, location.file, location.line);
     }
-
-    // ___ITEST_mutex_unlock(___ITEST_stdout_guard);
 }
 
 static struct ___ITEST_test_suite ___ITEST_test_suite = {
@@ -191,8 +83,6 @@ static struct ___ITEST_test_suite ___ITEST_test_suite = {
 };
 
 #define ITEST_SUITE_BEGIN(itest_test_suite) int main() {\
-    pid_t ___ITEST_is_child_process = 0;\
-    ___ITEST_init_stdout_guard();\
     ___ITEST_test_suite.name = #itest_test_suite;\
     
 #define ITEST_SUITE_END()\
@@ -260,19 +150,27 @@ static struct ___ITEST_test_suite ___ITEST_test_suite = {
 #define ASSERT(expr) do {\
     const char* expression = #expr;\
     struct ___ITEST_location location = ___ITEST_HERE();\
-    ___ITEST_assert_impl((expr), expression, &___ITEST_test_suite, location);\
+    ___ITEST_assert_impl((expr), expression, location, &___ITEST_test_suite);\
 } while (0)
 
-inline static struct ___ITEST_test_result ___ITEST_assert_impl(
-    uint8_t expr_success, const char* expression,
-    const struct ___ITEST_test_suite* suite, struct ___ITEST_location loc
+inline static void ___ITEST_assert_impl(
+    const uint8_t expr_success, const char* expression,
+    struct ___ITEST_location loc, const struct ___ITEST_test_suite* suite
 ) {
+    const uint8_t is_inside_a_test = suite->name != NULL;
     if (!expr_success) {
         struct ___ITEST_test_result res = ___ITEST_test_failed(expression, loc);
-        ___ITEST_print_test_result(suite->name, suite->current_test, res);
-        return res;
+        if (is_inside_a_test) {
+            ___ITEST_print_test_result(suite->name, suite->current_test, res);
+        } else {
+            #ifdef ITEST_NO_COLOR_IO
+            fprintf(stderr, "Assert failed: %s at %s:%d\n", expression, loc.file, loc.line);
+            #else
+            fprintf(stderr, "%sAssert failed: %s at %s:%d\n", ___ITEST_RED_COLOR, expression, loc.file, loc.line);
+            #endif
+        }
+        exit(1);
     }
-    return ___ITEST_test_succeed();
 }
 
 #define ___ITEST_HERE() { .file = __FILE__, .line = __LINE__ }

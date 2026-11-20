@@ -10,3 +10,14 @@ int main() {
 
 	return 0;	
 }
+
+ITEST_SUITE_BEGIN(onemoremathtest) {
+	ITEST(add_test) {
+		ASSERT_EQ(4, add(2, 2));
+	}
+
+	ITEST(sub_test) {
+		ASSERT_NE(3, sub(2, 2));
+	}
+	ITEST_SUITE_END();
+}

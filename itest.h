@@ -9,15 +9,17 @@ typedef void (*___ITEST_test_body)(void);
 
 /* Test Registry implementation */
 
-#define ___ITEST_CAPACITY 128
+#ifndef ITEST_CAP
+#define ITEST_CAP 128
+#endif
 
 static struct {
-    ___ITEST_test_body list[___ITEST_CAPACITY] = { NULL };
-    ___ITEST_u32 size = 0;
-} ___ITEST_registry;
+    ___ITEST_test_body list[ITEST_CAP];
+    ___ITEST_u32 size;
+} ___ITEST_registry = { .list = { NULL }, .size = 0 };
 
 static ___ITEST_u8 ___ITEST_add_test(___ITEST_test_body fn) {
-    if (___ITEST_registry.size == ___ITEST_CAPACITY) {
+    if (___ITEST_registry.size == ITEST_CAP) {
         return 1;
     }
     ___ITEST_registry.list[___ITEST_registry.size++] = fn;
